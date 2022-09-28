@@ -1,0 +1,118 @@
+---
+title: "aula3"
+author: "miaofang"
+date: "2022/8/31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+
+# 1). Data
+
+For this exercise, you will need to load some data on lethal police violence in the United States:
+
+```{r}
+link <- "https://raw.githubusercontent.com/FLS-6497/datasets/main/aula3/PKAP_raw_data.csv"
+dados <- readr::read_csv(link)
+```
+
+
+
+```{r}
+
+#cleaning data
+
+dados2 <- dados %>% select(race, contains("officer_")) %>% 
+  mutate(race = ifelse(race == "Black", 1, 0)) %>% 
+  mutate(officer_present = ifelse(officer_present == "Unknown", 1, 0)) %>% 
+  mutate(officer_race = case_when(officer_race == "White" ~ 1,
+                                  officer_race == "White,Unknown" ~ 1,
+                                  officer_race == "White, Unknown" ~ 1,
+                                  TRUE ~ 0)) %>% 
+  mutate(across(c(officer_name, officer_years, officer_undercover, officer_offduty, officer_personal), ~ ifelse(.x == "Yes", 1, 0))) %>%
+  mutate(officer_gender = ifelse(str_detect(officer_gender, "Female"), 1, 0)) %>% 
+  select(-officer_fire) %>% 
+  na.omit()
+  
+
+```
+
+
+# a) Exploration of features
+```{r}
+dados2 %>%
+  pivot_longer(-race) %>% 
+  mutate(race = ifelse(race == 1, "Black", "White")) %>% 
+  group_by(name, race) %>% 
+  summarise(n = sum(value, na.rm = TRUE)) %>% 
+  ggplot(aes(x = race, y = n)) +
+  geom_col() +
+  facet_wrap(~ name, scale = "free")
+
+dados %>% distinct(officer_name)
+```
+
+
+# 2) Logistic classifier
+```{r}
+
+library(mlr3learners)
+library(mlr3)
+ dados2
+ 
+# Training models
+tsk <- as_task_classif(race ~ ., data = dados2) #. represent all the variables in the dataframe
+
+learner <- lrn("classif.log_reg")
+learner$train(tsk)
+
+# Evaluate prediction
+pred <- learner$predict(tsk)
+pred$confusion  
+measure <- msr("classif.acc")
+pred$score(measure)
+```
+
+
+# 3) Training and testing
+
+## a) Create function
+
+Create a function to draw from the base a training sample and a test sample. For this, the function can return a list with the two samples. Also create an argument in the function that allows you to select the percentage of observations in the training sample (default will need to be 0.7).
+
+
+```{r}
+
+learner$train(tsk, row_ids = 1:120)
+```
+
+```{r}
+training_model <- function(treino = 0.7){
+  task <- as_task_classif(race ~ ., data = dados2) 
+  split <- partition(task, ratio = treino)
+  learner <-lrn("classif.log_reg")
+  learner$train(task, split$train)
+  pred <- learner$predict(task,split$test)
+  #pred$confusion
+  measure <- msr("classif.acc")
+  pred$score(measure)
+}
+
+```
+
+
+
+```{r}
+
+experiment <- 1:500 %>% 
+  map_dbl(~ training_model())
+
+as.data.frame(experiment) %>%
+  ggplot() + geom_histogram(aes(experiment), colour = "black", fill = "orange")
+```
+
