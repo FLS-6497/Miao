@@ -1,0 +1,172 @@
+---
+title: "exercicios 4"
+author: "miaofang"
+date: "2022/9/14"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+link <- "https://raw.githubusercontent.com/jacobwright32/Web_Scraper_AI_Core_Project/bb4865ae568e23ab8fadb6ea58cf117df2164ef3/web%20scraping/Cleaned%20Data/Brazil_Sao%20Bernardo%20Do%20Campo_Cleaned.csv"
+dados <- readr::read_csv(link)
+
+library(mlr3verse)
+library(glmnet)
+```
+
+# 1). Workflow
+
+## a). treinar modelo
+```{r}
+#limpeza dos dados
+dados <- dados %>% select_if(is.numeric)
+
+# Seleciona a tarefa e o modelo
+tsk <- as_task_regr(humidity ~ ., data = dados)
+learner <- lrn("regr.lm")    #algoritmo que vai usar. 
+learner2<- lrn("regr.glmnet", alpha = 0.7) # mlr_learners para dicionario de mais learners
+```
+
+
+## b). métrica de validação
+```{r}
+# Define estrategia de separacao da amostra
+resampling <- rsmp("holdout", ratio = 0.7)  #rmsp: usar 70% pra treinar, 
+                                            # o resto "holdout" para testar
+
+# Treina o modelo
+resultados <- resample(tsk, learner, resampling) #resample: rodar 
+resultados2 <- resample(tsk, learner2, resampling) 
+
+# Avalia predicoes
+measure <- msrs(c("regr.mae","regr.mse")) # Metrica
+                       # https://mlr3.mlr-org.com/reference/mlr_measures.html para mais métrica
+
+# Compare two different models
+res<- resultados$score(measure, ids = FALSE, predict_sets = "test")
+res2 <- resultados2$score(measure,ids = FALSE, predict_sets = "test")
+```
+
+
+## c). função
+```{r}
+roda_modelo <-function(algoritmo){
+
+  dados <- dados %>% select_if(is.numeric)
+  tsk <- as_task_regr(humidity ~ ., data = dados)
+  learner <- lrn(algoritmo ) 
+  resampling <- rsmp("holdout", ratio = 0.7)  
+  resultados <- resample(tsk, learner, resampling)
+  measure <- msrs(c("regr.mae","regr.mse"))
+  res<- resultados$score(measure, ids = FALSE, predict_sets = "test")
+  as.numeric(res[1,7])
+}
+
+```
+
+
+```{r}
+glmnet_modelo <-function(alpha ){
+
+  dados <- dados %>% select_if(is.numeric)
+  tsk <- as_task_regr(humidity ~ ., data = dados)
+  learner <- lrn("regr.glmnet", alpha = alpha ) 
+  resampling <- rsmp("holdout", ratio = 0.7)  
+  resultados <- resample(tsk, learner, resampling)
+  measure <- msrs(c("regr.mae","regr.mse"))
+  res<- resultados$score(measure, ids = FALSE, predict_sets = "test")
+  as.numeric(res[1,7])
+}
+```
+
+
+## d). repetição
+```{r}
+
+# 1:5 %>% 
+#   map_dbl(-roda_modelo("regr.lm",alpha =.))
+# 
+# 10:20 %>% map_dbl(sqrt) #calcular squared root
+# 
+# seq(0.1,0.9,by=0.1) %>% 
+#   map_dbl(~roda_modelo("", ratio = .x)) #ratio = the proportion of N
+# 
+# c("regr.lm","regr.glmnet") %>% 
+#   map_dbl(~glmnet_modelo(.x,alpha =1))
+
+```
+
+```{r}
+rep <- replicate(n=100, roda_modelo("regr.lm")) 
+rep <- as.data.frame(rep)
+rep %>%  ggplot() + geom_density(aes(x= rep))
+```
+
+
+# 2) Regularização 
+
+## a). função
+```{r}
+learner_lasso <- lrn("regr.glmnet", alpha = 1) # Lasso
+learner_ridge <- lrn("regr.glmnet", alpha = 0) # RIDGE
+```
+
+## b). função para glmnet
+```{r}
+glmnet_modelo(alpha = 1)
+glmnet_modelo(alpha = 0)
+
+rep2 <- replicate(n=100, glmnet_modelo(alpha = 1)) 
+rep2 <- as.data.frame(rep2)
+rep2 %>%  ggplot() + geom_density(aes(x= rep2))
+```
+
+
+
+# 3). Eleição
+```{r}
+link <- "https://raw.githubusercontent.com/FLS-6497/datasets/main/aula4/eleicoes_mun_2018.csv"
+elei18 <- readr::read_csv2(link)
+```
+
+## a) Transformações básicas 
+```{r}
+elei18<- elei18 %>% 
+  mutate(pct = votos_bolsonaro_2t_2018/votos_validos_2t_2018 ) %>%
+  mutate(percapital = pib_total/aptos_2018)
+```
+
+## b) Exploração
+```{r}
+elei18 %>% ggplot() + geom_col(aes(x = as.factor(sigla_uf), y = pct))
+
+elei18 %>%  mutate(scale = scale(percapital) )%>%  ggplot(aes(x = scale, y = pct)) + geom_point() + geom_smooth(se =F)
+
+# ou padronizar PIB com z score
+
+elei18 %>% scale(pib_total)
+```
+
+
+## c) Modelos
+
+Rode modelos lineares, com e sem regularização, para tentar predizer a votação de Bolsonaro nos municípios usando variáveis como regiao, semiarido, capital, pib_total.
+
+```{r}
+
+# Sem regularizacao
+
+  tsk_elei <- as_task_regr(pct ~ percapital + as.factor(regiao) + semiarido + capital , data = elei18)
+  
+  resultados_elei_sem <- resample(tsk_elei, learner, resampling)
+
+  res3<- resultados_elei_sem$score(measure, ids = FALSE, predict_sets = "test")
+  
+# Com regularizacao
+  
+  resultados_elei_com <- resample(tsk_elei, learner2, resampling)
+  res4<- resultados_elei_com$score(measure, ids = FALSE, predict_sets = "test")
+
+```
+
